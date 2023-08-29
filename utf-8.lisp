@@ -1,21 +1,22 @@
 ;;;-*- Mode: Lisp; Package: ENCODING -*-
 ;;
 ;; Copyright (C) Paul Meurer 2001-2006. All rights reserved.
-;; paul.meurer@aksis.uib.no
-;; HIT-centre, University of Bergen
+;; paul.meurer@uib.no
+;; University of Bergen
 ;;
 ;; utf-8 conversion
 ;;
 
 (in-package :encoding)
 
-;;(defvar *utf-8-table* (make-hash-table))
-
 ;; returns number of chars (= bytes) written
-;; new, iterative
-;; string-to-entities-table is a string tree which maps chars to entities, i.e. if "a~" -> "atilde" is an entry
-;; in that table, each occurrence of "a~" should be replaced by "&atilde;".
-(defun write-utf-8-encoded (string stream &key (start 0) end string-to-entity-table char-to-entity-list)
+;; iterative
+;; string-to-entity-table is a string tree which maps chars to entities, i.e. if "a~" -> "atilde" is an entry
+;;   in that table, each occurrence of "a~" should be replaced by "&atilde;".
+;; entity-to-string-table is a string tree which maps entities to strings
+;;   or numerical entities, i.e. &yAFcros; -> &#xF41A;
+(defun write-utf-8-encoded (string stream &key (start 0) end entity-to-string-table
+                                            string-to-entity-table char-to-entity-list)
   ;;(declare (optimize (speed 3)) (fixnum start end))
   ;;(unless end (setf end (length (or string ""))))
   (when string
@@ -25,23 +26,30 @@
        do (multiple-value-bind (value wholep match-end rest partial-value)
 	      (dat::string-tree-get string-to-entity-table string nil pos end)
 	    (declare (ignore rest))
-	    (let* ((char (char string pos))
-		   (code (char-code char))
-		   (value (or (and wholep value) partial-value)))
-	      (cond (value
-		     (write-char #\& stream)
-		     (write-string value stream)
-		     (write-char #\; stream)
-		     (setf pos (1- (or match-end end))))
-		    ((and char-to-entity-list (find char char-to-entity-list))
-		     (write-char #\& stream)
-		     (write-string (cadr (member char char-to-entity-list)) stream)
-		     (write-char #\; stream))
-		    ((< code #x80)
-		     (write-char char stream)
-		     (incf count))
-		    (t
-		     (incf count (write-unicode-to-utf-8 code stream))))))
+	    (multiple-value-bind (ent-value ent-wholep ent-match-end rest ent-partial-value)
+	        (dat::string-tree-get entity-to-string-table string nil pos end)
+              (declare (ignore rest))
+	      (let* ((char (char string pos))
+		     (code (char-code char))
+		     (value (or (and wholep value) partial-value))
+                     (ent-value (or (and ent-wholep ent-value) ent-partial-value)))
+	        (cond (value
+		       (write-char #\& stream)
+		       (write-string value stream)
+		       (write-char #\; stream)
+		       (setf pos (1- (or match-end end))))
+                      (ent-value
+		       (write-string ent-value stream)
+		       (setf pos (1- (or ent-match-end end))))
+		      ((and char-to-entity-list (find char char-to-entity-list))
+		       (write-char #\& stream)
+		       (write-string (cadr (member char char-to-entity-list)) stream)
+		       (write-char #\; stream))
+		      ((< code #x80)
+		       (write-char char stream)
+		       (incf count))
+		      (t
+		       (incf count (write-unicode-to-utf-8 code stream)))))))
        finally (return count))))
 
 ;; the same for a vector of octets, but only pure utf8 encoding, no entities
@@ -108,7 +116,6 @@
 ;; when resolve-entities-only-p = T; no utf-8 decoding is performed (works only for numerical entities)
 (defun utf-8-decode (string &optional resolve-entities-p external-entities warn-p resolve-entities-only-p)
   ;; #-openmcl(declare (optimize (safety 0) (speed 3)))
-  ;;(print string)
   (when string
     (let ((length (length string))
 	  (pos 0))
@@ -242,40 +249,6 @@
 			      (write-char (code-char code) stream)
 			      (incf pos))))))))))
 
-
-#+test
-(defun xutf-8-decode (string)
-  (when string
-    (let ((length (length string))
-	  (pos 0))
-      (with-output-to-string (stream)
-	(labels ((decode-one (code size)
-		   (incf pos)
-		   (cond ((zerop size)
-			  (write-char (code-char code) stream))
-			 ((>= pos length)
-			  (error "The string ~s does not seem to be UTF-8." string))
-			 (t
-			  (decf size 6)
-			  (decode-one (+ code (ash (logand #b00111111
-							   (char-code (char string pos)))
-						   size))
-				      size))))
-		 (decode ()
-		   (cond ((< pos length)
-			  (let* ((char (char string pos))
-				 (code (char-code char)))
-			    (cond ((zerop (logand #b10000000 code))
-				   (incf pos)
-				   (write-char char stream))
-				  (t (error "Not zero: (logand #b10000000 ~d)~%" code))))
-			  (decode))
-			 ((= pos length)
-			  nil)
-			 (t
-			  (error "The string ~s does not seem to be UTF-8." string)))))
-	  (decode))))))
-
 (defun utf-8-encode (string &key char-to-entity-list)
   (let ((length nil))
     (values (with-output-to-string
@@ -351,19 +324,5 @@
          5)
         ((< char-code #x80000000)
          6)))
-
-#+mcl
-(defun mac-to-unix-char-code (code)
-  (let ((pos (position code #(193 199 200 192 203 231 229 204 229 129 174 130 233 131 230 232 237 234 235 236 35 132 241 238 239 205 133 35 175 244 242 243 134 217 35 167 136 135 137 139 138 140 190 141 143 142 144 145 147 146 148 149 35 150 152 151 153 155 154 214 191 157 156 158 159 35 216))))
-    (if pos
-      (aref #(161 171 187 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 255) pos)
-      code)))
-
-#+mcl
-(defun unix-to-mac-char-code (code)
-  (let ((pos (position code #(161 171 187 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 255))))
-    (if pos
-      (aref #(193 199 200 192 203 231 229 204 229 129 174 130 233 131 230 232 237 234 235 236 35 132 241 238 239 205 133 35 175 244 242 243 134 217 35 167 136 135 137 139 138 140 190 141 143 142 144 145 147 146 148 149 35 150 152 151 153 155 154 214 191 157 156 158 159 35 216) pos)
-      code)))
 
 :eof
