@@ -4,7 +4,6 @@
 
 (asdf:defsystem encoding
   :name "encoding"
-  ;;:source-pathname "lisp:projects;utilities;"
   :author "Paul Meurer <paul.meurer@uib.no>"
   :maintainer "Paul Meurer <paul.meurer@uib.no>"
   :licence "Lesser Lisp General Public License"
@@ -13,6 +12,7 @@
   :serial t
   :components ((:file "encoding-package")
 	       #-sbcl(:file "char-entities")
-	       (:file "utf-8")))
+	       (:file "utf-8")
+               (:file "transliteration")))
 
 :eof
