@@ -1,0 +1,9 @@
+*~
+*.lx64fsl
+*.fasl
+*.pid
+*.bak
+*.fst
+*.tab
+*.cfg
+*#*
